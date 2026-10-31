@@ -1,0 +1,149 @@
+name: sharding-repl-cache
+
+x-mongo: &mongo
+  image: mongo:latest
+  restart: unless-stopped
+
+x-healthcheck: &healthcheck
+  interval: 5s
+  timeout: 5s
+  retries: 10
+  start_period: 10s
+
+services:
+  # Сервер конфигурации (replica set config_server)
+  configSrv:
+    <<: *mongo
+    container_name: configSrv
+    command: ["--configsvr", "--replSet", "config_server", "--bind_ip_all", "--port", "27017"]
+    volumes:
+      - config_data:/data/db
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "mongosh", "--port", "27017", "--quiet", "--eval", "db.adminCommand('ping')"]
+
+  # Шард 1: replica set shard1 из трёх реплик
+  shard1-1:
+    <<: *mongo
+    container_name: shard1-1
+    command: ["--shardsvr", "--replSet", "shard1", "--bind_ip_all", "--port", "27018"]
+    volumes:
+      - shard1-1_data:/data/db
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "mongosh", "--port", "27018", "--quiet", "--eval", "db.adminCommand('ping')"]
+
+  shard1-2:
+    <<: *mongo
+    container_name: shard1-2
+    command: ["--shardsvr", "--replSet", "shard1", "--bind_ip_all", "--port", "27018"]
+    volumes:
+      - shard1-2_data:/data/db
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "mongosh", "--port", "27018", "--quiet", "--eval", "db.adminCommand('ping')"]
+
+  shard1-3:
+    <<: *mongo
+    container_name: shard1-3
+    command: ["--shardsvr", "--replSet", "shard1", "--bind_ip_all", "--port", "27018"]
+    volumes:
+      - shard1-3_data:/data/db
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "mongosh", "--port", "27018", "--quiet", "--eval", "db.adminCommand('ping')"]
+
+  # Шард 2: replica set shard2 из трёх реплик
+  shard2-1:
+    <<: *mongo
+    container_name: shard2-1
+    command: ["--shardsvr", "--replSet", "shard2", "--bind_ip_all", "--port", "27019"]
+    volumes:
+      - shard2-1_data:/data/db
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "mongosh", "--port", "27019", "--quiet", "--eval", "db.adminCommand('ping')"]
+
+  shard2-2:
+    <<: *mongo
+    container_name: shard2-2
+    command: ["--shardsvr", "--replSet", "shard2", "--bind_ip_all", "--port", "27019"]
+    volumes:
+      - shard2-2_data:/data/db
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "mongosh", "--port", "27019", "--quiet", "--eval", "db.adminCommand('ping')"]
+
+  shard2-3:
+    <<: *mongo
+    container_name: shard2-3
+    command: ["--shardsvr", "--replSet", "shard2", "--bind_ip_all", "--port", "27019"]
+    volumes:
+      - shard2-3_data:/data/db
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "mongosh", "--port", "27019", "--quiet", "--eval", "db.adminCommand('ping')"]
+
+  # Роутер
+  mongos_router:
+    <<: *mongo
+    container_name: mongos_router
+    command: ["mongos", "--configdb", "config_server/configSrv:27017", "--bind_ip_all", "--port", "27020"]
+    depends_on:
+      configSrv:
+        condition: service_healthy
+      shard1-1:
+        condition: service_healthy
+      shard1-2:
+        condition: service_healthy
+      shard1-3:
+        condition: service_healthy
+      shard2-1:
+        condition: service_healthy
+      shard2-2:
+        condition: service_healthy
+      shard2-3:
+        condition: service_healthy
+    ports:
+      - 27020:27020
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "mongosh", "--port", "27020", "--quiet", "--eval", "db.adminCommand('ping')"]
+
+  # Кеш запросов приложения к MongoDB
+  redis:
+    container_name: redis
+    image: redis:latest
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "redis-cli", "ping"]
+
+  pymongo_api:
+    container_name: pymongo_api
+    build:
+      context: api_app
+      dockerfile: Dockerfile
+    depends_on:
+      mongos_router:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    ports:
+      - 8080:8080
+    environment:
+      MONGODB_URL: "mongodb://mongos_router:27020"
+      MONGODB_DATABASE_NAME: "somedb"
+      REDIS_URL: "redis://redis:6379"
+
+volumes:
+  redis_data:
+  config_data:
+  shard1-1_data:
+  shard1-2_data:
+  shard1-3_data:
+  shard2-1_data:
+  shard2-2_data:
+  shard2-3_data:
